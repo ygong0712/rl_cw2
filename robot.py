@@ -104,6 +104,52 @@ def shortest_distance_to_path(point, waypoints):
     return min_dist
 
 
+def check_variation_within_range(array, max_range, num_element):
+    """
+    Check if the variation of the prior ten elements in the array is within a specified range.
+
+    Parameters:
+    array (np.ndarray): Input NumPy array.
+    min_range (float): The minimum allowed variation.
+    max_range (float): The maximum allowed variation.
+
+    Returns:
+    bool: True if the variation is within the range, False otherwise.
+    """
+    # Ensure the array has at least ten elements
+    if len(array) < num_element:
+        raise ValueError("Array must contain at least 'num_element' elements.")
+
+    # Select the last ten elements
+    last_num_element_elements = array[-num_element:]
+
+    # Compute the variation as the difference between the max and min of the last ten elements
+    diffs = last_num_element_elements[:, np.newaxis, :] - last_num_element_elements[np.newaxis, :, :]
+    dists_sq = np.sum(diffs ** 2, axis=-1)
+    dists = np.sqrt(dists_sq)  # Take the square root to get the actual Euclidean distances
+
+    np.fill_diagonal(dists, np.nan)
+
+    # Find the maximum Euclidean distance, ignoring NaN values
+    max_dist = np.nanmax(dists)
+
+    return max_dist <= max_range
+
+
+def generate_random_vector(threshold):
+    while True:
+        # Generate a random 2-dimensional array (vector)
+        vector = np.random.rand(
+            2) * 1000 - 500  # Adjust the range as needed to increase the likelihood of a larger magnitude
+
+        # Calculate the magnitude (Euclidean norm) of the vector
+        magnitude = np.linalg.norm(vector)
+
+        # Check if the magnitude is larger than 10
+        if magnitude > threshold:
+            return vector
+
+
 class Robot:
 
     def __init__(self, goal_state):
@@ -119,8 +165,8 @@ class Robot:
         self.demo_count = 0
         # self.demonstration_actions = np.array([])
         self.demonstration_states = np.array([])
-        self.curr_path = []
-        self.curr_action = []
+        self.curr_path = np.array([])
+        self.curr_action = np.array([])
         self.noise = 0.0
 
         self.demonstration = True
@@ -145,8 +191,8 @@ class Robot:
         self.planning_path_rewards = []
         self.planning_mean_actions = []
         self.plan_index = 0
-        self.curr_path = []
-        self.curr_action = []
+        self.curr_path = np.array([])
+        self.curr_action = np.array([])
 
     def cross_entropy_method_planning(self, robot_current_state, goal_state, path_length=50, num_path=30, iteration=10,
                                       num_elites=5):
@@ -265,21 +311,32 @@ class Robot:
         '''
 
         # nearest_index, nearest_point = self.find_closest_waypoint(state, self.demonstration_states)
+        if len(self.curr_path.shape) == 1:
+            self.curr_path = np.array([state]).reshape((1, 2))
+        else:
+            self.curr_path = np.concatenate((self.curr_path, state.reshape((1, 2))), axis=0)
 
-
-
-        if shortest_distance_to_path(state, self.demonstration_states) > 3:
+        if money_remaining > 70:
             action = (state - self.goal_state)
+
+        elif self.curr_path.shape[0] > 20 and check_variation_within_range(self.curr_path, 5, 20):
+            action = generate_random_vector(500)
+            print('stuck: ', action)
+
+        elif shortest_distance_to_path(state, self.demonstration_states) > 5:
+            action = (state - self.goal_state)
+            print('deviated: ', action)
+            print('demol', self.demonstration_states.shape[0])
 
         else:
             state_tensor = torch.tensor(state.reshape((1, 2)), dtype=torch.float32)
             action = self.behavior_clone_network(state_tensor)
             action = action.detach().cpu().numpy()
             action = action.reshape((2,))
+            '''
             gaussian = np.random.normal(loc=0, scale=self.noise, size=1)
             action = action + gaussian
-
-
+            '''
 
         self.episode += 1
         return action
@@ -297,19 +354,37 @@ class Robot:
             action = action.detach().cpu().numpy()
             action = action.reshape((2,))
         '''
-        if shortest_distance_to_path(state, self.demonstration_states) > 3:
-            action = (state - self.goal_state)
+        self.episode += 1
 
-        state_tensor = torch.tensor(state.reshape((1, 2)), dtype=torch.float32)
-        action = self.behavior_clone_network(state_tensor)
-        action = action.detach().cpu().numpy()
-        action = action.reshape((2,))
+        if self.episode > 300:
+            return state - self.goal_state
+
+        if len(self.curr_path.shape) == 1:
+            self.curr_path = np.array([state]).reshape((1, 2))
+        else:
+            self.curr_path = np.concatenate((self.curr_path, state.reshape((1, 2))), axis=0)
+
+        if self.curr_path.shape[0] > 20 and check_variation_within_range(self.curr_path, 5, 20):
+            action = generate_random_vector(500)
+            print('stuck: ', action)
+
+        elif shortest_distance_to_path(state, self.demonstration_states) > 5:
+            action = (state - self.goal_state)
+            print('deviated: ', action)
+
+        else:
+            state_tensor = torch.tensor(state.reshape((1, 2)), dtype=torch.float32)
+            action = self.behavior_clone_network(state_tensor)
+            action = action.detach().cpu().numpy()
+            action = action.reshape((2,))
+
         return action
 
     # Function that processes a transition
     def process_transition(self, state, action, next_state, money_remaining):
         # TODO: This allows you to process or store a transition that the robot has experienced in the environment
         # Currently, nothing happens
+        '''
         if len(self.inputs_mb.shape) == 1:
             self.inputs_mb = np.concatenate((state.reshape((1, 2)), action.reshape((1, 2))), axis=1).reshape((1, 4))
             self.labels_mb = next_state.reshape((1, 2))
@@ -318,7 +393,7 @@ class Robot:
             self.inputs_mb = np.concatenate((self.inputs_mb, new_inputs), axis=0)
             self.labels_mb = np.concatenate((self.labels_mb, next_state.reshape((1, 2))), axis=0)
 
-        '''
+
         if len(self.inputs_bc.shape) == 1:
             self.inputs_bc = state.reshape((1, 2))
             self.labels_bc = action.reshape((1, 2))
@@ -326,8 +401,11 @@ class Robot:
             self.inputs_bc = np.concatenate((self.inputs_bc, state.reshape((1, 2))), axis=0)
             self.labels_bc = np.concatenate((self.labels_bc, action.reshape((1, 2))), axis=0)
         '''
-        self.curr_path.append(state)
-        self.curr_action.append(action)
+
+        if len(self.curr_action.shape) == 1:
+            self.curr_action = np.array([action]).reshape((1, 2))
+        else:
+            self.curr_action = np.concatenate((self.curr_action, action.reshape((1, 2))), axis=0)
 
         if self.episode == 200 and money_remaining >= 5:
             # self.train_dynamic()
@@ -343,25 +421,33 @@ class Robot:
 
         if np.linalg.norm(next_state - self.goal_state) < 5 and money_remaining >= 5:
             # self.train_dynamic()
-            self.curr_path = np.array(self.curr_path)
-            self.curr_action = np.array(self.curr_action)
+            if self.inputs_bc.shape[0] == 200 and money_remaining > 70 and np.linalg.norm(self.inputs_bc[-1] - self.goal_state) > 5:
+                print('distance: ', np.linalg.norm(self.inputs_bc[-1] - self.goal_state))
+                self.demonstration_states = self.curr_path
+                self.inputs_bc = self.curr_path
+                self.labels_bc = self.curr_action
+                print(self.inputs_bc.shape)
 
-            if self.episode < self.demonstration_states.shape[0] or self.inputs_bc.shape[0] == 200:
+            if self.episode < self.demonstration_states.shape[0]:
                 self.demonstration_states = self.curr_path
 
-            to_append_indice = find_distant_points(self.curr_path, self.inputs_bc, 15)
+            to_append_indice = find_distant_points(self.curr_path, self.inputs_bc, 25)
             to_append = self.curr_path[to_append_indice]
             to_append_label = self.curr_action[to_append_indice]
             self.inputs_bc = np.concatenate((self.inputs_bc, to_append), axis=0)
             self.labels_bc = np.concatenate((self.labels_bc, to_append_label), axis=0)
-            # self.behavior_clone_network.apply(reset_weights)
+            print('data', self.inputs_bc.shape)
+            self.behavior_clone_network.apply(reset_weights)
+            #print(self.behavior_clone_network.parameters())
             self.train_imitation()
-            print(to_append.shape)
-            print(self.inputs_bc.shape)
             self.reset = True
             self.noise = 0.0
             self.reset_param()
             self.episode = 0
+
+        elif money_remaining <= 5:
+            self.episode = 0
+            self.reset_param()
 
     # Function that takes in the list of states and actions for a demonstration
     def process_demonstration(self, demonstration_states, demonstration_actions, money_remaining):
@@ -433,7 +519,7 @@ class Robot:
             loss_value = loss.item()
             # Print out this loss
 
-            print('Iteration ' + str(training_iteration) + ', Loss = ' + str(loss_value))
+            #print('Iteration ' + str(training_iteration) + ', Loss = ' + str(loss_value))
 
             # Store this loss in the list
             losses.append(loss_value)
@@ -474,7 +560,7 @@ class Robot:
             loss_value = loss.item()
             # Print out this loss
 
-            print('Iteration ' + str(training_iteration) + ', Loss = ' + str(loss_value))
+            #print('Iteration ' + str(training_iteration) + ', Loss = ' + str(loss_value))
             # Store this loss in the list
             losses.append(loss_value)
             # Update the list of iterations
